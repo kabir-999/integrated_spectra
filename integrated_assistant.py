@@ -194,6 +194,82 @@ class ImprovedCommandDetector:
         return {}
 
 
+class ObjectTracker:
+    """Track objects and their positions to detect changes"""
+    
+    def __init__(self, position_threshold=100):
+        self.previous_objects = {}
+        self.position_threshold = position_threshold  # Pixel distance threshold
+    
+    def calculate_center(self, bbox):
+        """Calculate center point of bounding box"""
+        x1, y1, x2, y2 = bbox
+        return ((x1 + x2) / 2, (y1 + y2) / 2)
+    
+    def calculate_distance(self, point1, point2):
+        """Calculate Euclidean distance between two points"""
+        return np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+    
+    def has_changed(self, current_objects):
+        """
+        Check if objects have changed significantly
+        Returns: (has_changed: bool, change_description: str)
+        """
+        # If no previous data, it's a change
+        if not self.previous_objects:
+            self.previous_objects = current_objects
+            return True, "initial_detection"
+        
+        # Check if object counts have changed
+        prev_counts = {}
+        curr_counts = {}
+        
+        for obj in self.previous_objects:
+            label = obj['label']
+            prev_counts[label] = prev_counts.get(label, 0) + 1
+        
+        for obj in current_objects:
+            label = obj['label']
+            curr_counts[label] = curr_counts.get(label, 0) + 1
+        
+        # If different object types or counts
+        if prev_counts != curr_counts:
+            self.previous_objects = current_objects
+            return True, "object_count_changed"
+        
+        # Check if positions have changed significantly
+        position_changed = False
+        
+        for curr_obj in current_objects:
+            curr_label = curr_obj['label']
+            curr_center = self.calculate_center(curr_obj['bbox'])
+            
+            # Find matching object in previous frame
+            min_distance = float('inf')
+            for prev_obj in self.previous_objects:
+                if prev_obj['label'] == curr_label:
+                    prev_center = self.calculate_center(prev_obj['bbox'])
+                    distance = self.calculate_distance(curr_center, prev_center)
+                    if distance < min_distance:
+                        min_distance = distance
+            
+            # If object moved significantly
+            if min_distance > self.position_threshold:
+                position_changed = True
+                break
+        
+        if position_changed:
+            self.previous_objects = current_objects
+            return True, "position_changed"
+        
+        # No significant change
+        return False, "no_change"
+    
+    def reset(self):
+        """Reset the tracker"""
+        self.previous_objects = {}
+
+
 class VisionRecognitionSystem:
     """BLIP-based vision recognition system"""
     
@@ -206,6 +282,7 @@ class VisionRecognitionSystem:
         self.is_running = False
         self.tts = tts
         self.glasses = SmartGlassesAudio(None) if tts else None
+        self.object_tracker = ObjectTracker(position_threshold=100)
         print("🔧 Initializing Vision Recognition System...")
     
     def load_models(self):
@@ -403,7 +480,8 @@ class VisionRecognitionSystem:
                     
                     detected_objects.append({
                         'label': label,
-                        'confidence': f"{conf:.2f}"
+                        'confidence': f"{conf:.2f}",
+                        'bbox': [x1, y1, x2, y2]
                     })
                     
                     # Color coding
@@ -429,9 +507,9 @@ class VisionRecognitionSystem:
             return [], frame
     
     def realtime_object_detection(self):
-        """Run real-time object detection with voice announcements every 3 seconds"""
+        """Run real-time object detection with intelligent voice announcements"""
         print("\n" + "="*60)
-        print("🎯 REAL-TIME OBJECT DETECTION")
+        print("🎯 REAL-TIME OBJECT DETECTION (INTELLIGENT)")
         print("="*60)
         
         # Load models if not already loaded
@@ -453,14 +531,18 @@ class VisionRecognitionSystem:
         print("✅ Camera opened successfully")
         print("\n📋 Instructions:")
         print("  • Real-time object detection active")
-        print("  • Objects announced every 3 seconds")
+        print("  • Analysis every 5 seconds")
+        print("  • Announces only when objects/positions change")
         print("  • Press 'q' to quit")
         print("="*60)
         
         self.speak_text("Object detection started")
         
-        last_announcement_time = 0
-        announcement_interval = 3.0  # Announce every 3 seconds
+        # Reset tracker
+        self.object_tracker.reset()
+        
+        last_analysis_time = 0
+        analysis_interval = 5.0  # Analyze every 5 seconds
         
         while True:
             ret, frame = cap.read()
@@ -468,44 +550,63 @@ class VisionRecognitionSystem:
                 print("❌ Failed to read frame")
                 break
             
-            # Detect objects
+            # Detect objects (but don't announce yet)
             detected_objects, annotated_frame = self.detect_objects(frame)
             
             # Display object count on frame
             obj_count = len(detected_objects)
-            cv2.rectangle(annotated_frame, (10, 10), (400, 60), (0, 0, 0), -1)
-            cv2.putText(annotated_frame, f"Objects Detected: {obj_count}", 
-                       (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             
-            # Periodic voice announcements
+            # Add status bar
+            cv2.rectangle(annotated_frame, (10, 10), (600, 100), (0, 0, 0), -1)
+            cv2.putText(annotated_frame, f"Objects Detected: {obj_count}", 
+                       (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Show next analysis countdown
             current_time = time.time()
-            if current_time - last_announcement_time >= announcement_interval:
+            time_until_next = max(0, analysis_interval - (current_time - last_analysis_time))
+            cv2.putText(annotated_frame, f"Next analysis: {time_until_next:.1f}s", 
+                       (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            
+            # Periodic analysis with change detection
+            if current_time - last_analysis_time >= analysis_interval:
                 if detected_objects:
-                    # Count objects by type
-                    object_counts = {}
-                    for obj in detected_objects:
-                        label = obj['label']
-                        object_counts[label] = object_counts.get(label, 0) + 1
+                    # Check if scene has changed
+                    has_changed, change_type = self.object_tracker.has_changed(detected_objects)
                     
-                    # Create announcement text
-                    announcement_parts = []
-                    for label, count in object_counts.items():
-                        if count == 1:
-                            announcement_parts.append(f"one {label}")
-                        else:
-                            announcement_parts.append(f"{count} {label}s")
-                    
-                    announcement = "I see " + ", ".join(announcement_parts)
-                    
-                    print(f"\n🔊 Announcing: {announcement}")
-                    
-                    # Speak in background thread to avoid blocking
-                    threading.Thread(target=self.speak_text, args=(announcement,), daemon=True).start()
+                    if has_changed:
+                        # Count objects by type
+                        object_counts = {}
+                        for obj in detected_objects:
+                            label = obj['label']
+                            object_counts[label] = object_counts.get(label, 0) + 1
+                        
+                        # Create announcement text
+                        announcement_parts = []
+                        for label, count in object_counts.items():
+                            if count == 1:
+                                announcement_parts.append(f"one {label}")
+                            else:
+                                announcement_parts.append(f"{count} {label}s")
+                        
+                        announcement = "I see " + ", ".join(announcement_parts)
+                        
+                        print(f"\n🔊 Change detected ({change_type})")
+                        print(f"🔊 Announcing: {announcement}")
+                        
+                        # Speak in background thread to avoid blocking
+                        threading.Thread(target=self.speak_text, args=(announcement,), daemon=True).start()
+                    else:
+                        print(f"\n✓ No significant changes detected")
                 else:
-                    print("\n🔊 No objects detected")
-                    threading.Thread(target=self.speak_text, args=("No objects detected",), daemon=True).start()
+                    # Check if we had objects before
+                    if self.object_tracker.previous_objects:
+                        print("\n🔊 Objects disappeared")
+                        threading.Thread(target=self.speak_text, args=("No objects detected",), daemon=True).start()
+                        self.object_tracker.reset()
+                    else:
+                        print("\n✓ Still no objects")
                 
-                last_announcement_time = current_time
+                last_analysis_time = current_time
             
             cv2.imshow('Real-time Object Detection', annotated_frame)
             
@@ -736,7 +837,8 @@ class IntegratedAssistant:
         print("\n✨ Features:")
         print("  • Voice Assistant with Command Detection")
         print("  • Image Capture with BLIP Captioning + Speech")
-        print("  • Real-time Object Detection with Voice Announcements")
+        print("  • Real-time Object Detection with Intelligent Announcements")
+        print("  • Change Detection (Position & Objects)")
         print("  • Conversational AI with Memory")
         print("="*70)
         
@@ -745,7 +847,7 @@ class IntegratedAssistant:
             print("="*70)
             print("1️⃣  Voice Assistant (Commands + Conversation)")
             print("2️⃣  Capture & Caption Image (BLIP + TTS)")
-            print("3️⃣  Real-time Object Detection (YOLO + Voice)")
+            print("3️⃣  Real-time Object Detection (YOLO + Smart Voice)")
             print("0️⃣  Exit")
             print("="*70)
             
