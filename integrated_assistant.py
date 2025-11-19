@@ -382,7 +382,7 @@ class VisionRecognitionSystem:
         print("\n📋 Instructions:")
         print("  • Position yourself/object in frame")
         print("  • Press SPACE to capture")
-        print("  • Press 'q' to cancel")
+        print("  • Press 'q' to return to main menu")
         print("="*60)
         print("\n⚠️  IMPORTANT: Click on the camera window to focus it!")
         
@@ -394,71 +394,76 @@ class VisionRecognitionSystem:
         
         frame_count = 0
         
-        while not captured:
-            ret, frame = cap.read()
-            if not ret:
-                print("❌ Failed to read frame")
-                break
-            
-            frame_count += 1
-            
-            # Add capture instruction overlay with blinking effect
-            display_frame = frame.copy()
-            
-            # Blinking text effect
-            if (frame_count // 15) % 2 == 0:
-                cv2.rectangle(display_frame, (30, 30), (750, 100), (0, 0, 0), -1)
-                cv2.rectangle(display_frame, (30, 30), (750, 100), (0, 255, 0), 3)
-                cv2.putText(display_frame, "Press SPACE to capture, Q to cancel", 
-                           (50, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-            
-            cv2.imshow(window_name, display_frame)
-            
-            # Wait for key press with longer delay for better detection
-            key = cv2.waitKey(30) & 0xFF
-            
-            if key == 32:  # Space bar (ASCII code 32)
-                print("\n📸 Capturing image...")
+        try:
+            while not captured:
+                ret, frame = cap.read()
+                if not ret:
+                    print("❌ Failed to read frame")
+                    break
                 
-                # Close the preview window
-                cv2.destroyWindow(window_name)
+                frame_count += 1
                 
-                # Capture and analyze
-                print("🔍 Analyzing with BLIP...")
-                caption = self.analyze_with_blip(frame)
+                # Add capture instruction overlay with blinking effect
+                display_frame = frame.copy()
                 
-                print(f"\n📝 Caption: {caption}")
-                print("="*60)
+                # Blinking text effect
+                if (frame_count // 15) % 2 == 0:
+                    cv2.rectangle(display_frame, (30, 30), (850, 100), (0, 0, 0), -1)
+                    cv2.rectangle(display_frame, (30, 30), (850, 100), (0, 255, 0), 3)
+                    cv2.putText(display_frame, "Press SPACE to capture, Q to return", 
+                               (50, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                 
-                # Speak the caption
-                self.speak_text(caption)
+                cv2.imshow(window_name, display_frame)
                 
-                # Save the captured image
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"capture_{timestamp}.jpg"
-                cv2.imwrite(filename, frame)
-                print(f"💾 Image saved as: {filename}")
+                # Wait for key press with longer delay for better detection
+                key = cv2.waitKey(30) & 0xFF
                 
-                captured = True
-                
-            elif key == ord('q') or key == ord('Q'):
-                print("\n❌ Capture cancelled")
-                break
-            elif key == 27:  # ESC key
-                print("\n❌ Capture cancelled (ESC pressed)")
-                break
+                if key == 32:  # Space bar (ASCII code 32)
+                    print("\n📸 Capturing image...")
+                    
+                    # Capture and analyze
+                    print("🔍 Analyzing with BLIP...")
+                    caption = self.analyze_with_blip(frame)
+                    
+                    print(f"\n📝 Caption: {caption}")
+                    print("="*60)
+                    
+                    # Speak the caption
+                    self.speak_text(caption)
+                    
+                    # Save the captured image
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"capture_{timestamp}.jpg"
+                    cv2.imwrite(filename, frame)
+                    print(f"💾 Image saved as: {filename}")
+                    
+                    captured = True
+                    
+                elif key == ord('q') or key == ord('Q'):
+                    print("\n↩️ Returning to main menu...")
+                    break
+                elif key == 27:  # ESC key
+                    print("\n↩️ Returning to main menu (ESC pressed)...")
+                    break
         
-        cap.release()
-        cv2.destroyAllWindows()
+        except Exception as e:
+            print(f"\n❌ Error during capture: {str(e)}")
         
-        # Ensure all windows are closed
-        cv2.waitKey(1)
-        
-        if captured:
-            print("\n✅ Image capture and captioning completed!")
-        
-        # Brief pause before returning to menu
-        time.sleep(1)
+        finally:
+            # Cleanup
+            cap.release()
+            cv2.destroyAllWindows()
+            
+            # Ensure all windows are closed
+            cv2.waitKey(1)
+            
+            if captured:
+                print("\n✅ Image capture and captioning completed!")
+            else:
+                print("\n✅ Capture cancelled")
+            
+            # Brief pause before returning to menu
+            time.sleep(1)
     
     def detect_objects(self, frame):
         """Detect objects using YOLO model"""
@@ -533,7 +538,7 @@ class VisionRecognitionSystem:
         print("  • Real-time object detection active")
         print("  • Analysis every 5 seconds")
         print("  • Announces only when objects/positions change")
-        print("  • Press 'q' to quit")
+        print("  • Press 'q' to return to main menu")
         print("="*60)
         
         self.speak_text("Object detection started")
@@ -544,84 +549,92 @@ class VisionRecognitionSystem:
         last_analysis_time = 0
         analysis_interval = 5.0  # Analyze every 5 seconds
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("❌ Failed to read frame")
-                break
-            
-            # Detect objects (but don't announce yet)
-            detected_objects, annotated_frame = self.detect_objects(frame)
-            
-            # Display object count on frame
-            obj_count = len(detected_objects)
-            
-            # Add status bar
-            cv2.rectangle(annotated_frame, (10, 10), (600, 100), (0, 0, 0), -1)
-            cv2.putText(annotated_frame, f"Objects Detected: {obj_count}", 
-                       (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-            # Show next analysis countdown
-            current_time = time.time()
-            time_until_next = max(0, analysis_interval - (current_time - last_analysis_time))
-            cv2.putText(annotated_frame, f"Next analysis: {time_until_next:.1f}s", 
-                       (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            
-            # Periodic analysis with change detection
-            if current_time - last_analysis_time >= analysis_interval:
-                if detected_objects:
-                    # Check if scene has changed
-                    has_changed, change_type = self.object_tracker.has_changed(detected_objects)
-                    
-                    if has_changed:
-                        # Count objects by type
-                        object_counts = {}
-                        for obj in detected_objects:
-                            label = obj['label']
-                            object_counts[label] = object_counts.get(label, 0) + 1
-                        
-                        # Create announcement text
-                        announcement_parts = []
-                        for label, count in object_counts.items():
-                            if count == 1:
-                                announcement_parts.append(f"one {label}")
-                            else:
-                                announcement_parts.append(f"{count} {label}s")
-                        
-                        announcement = "I see " + ", ".join(announcement_parts)
-                        
-                        print(f"\n🔊 Change detected ({change_type})")
-                        print(f"🔊 Announcing: {announcement}")
-                        
-                        # Speak in background thread to avoid blocking
-                        threading.Thread(target=self.speak_text, args=(announcement,), daemon=True).start()
-                    else:
-                        print(f"\n✓ No significant changes detected")
-                else:
-                    # Check if we had objects before
-                    if self.object_tracker.previous_objects:
-                        print("\n🔊 Objects disappeared")
-                        threading.Thread(target=self.speak_text, args=("No objects detected",), daemon=True).start()
-                        self.object_tracker.reset()
-                    else:
-                        print("\n✓ Still no objects")
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("❌ Failed to read frame")
+                    break
                 
-                last_analysis_time = current_time
-            
-            cv2.imshow('Real-time Object Detection', annotated_frame)
-            
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                print("\n👋 Stopping object detection...")
-                self.speak_text("Object detection stopped")
-                break
+                # Detect objects (but don't announce yet)
+                detected_objects, annotated_frame = self.detect_objects(frame)
+                
+                # Display object count on frame
+                obj_count = len(detected_objects)
+                
+                # Add status bar
+                cv2.rectangle(annotated_frame, (10, 10), (600, 100), (0, 0, 0), -1)
+                cv2.putText(annotated_frame, f"Objects Detected: {obj_count}", 
+                           (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                # Show next analysis countdown
+                current_time = time.time()
+                time_until_next = max(0, analysis_interval - (current_time - last_analysis_time))
+                cv2.putText(annotated_frame, f"Next analysis: {time_until_next:.1f}s", 
+                           (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                
+                # Periodic analysis with change detection
+                if current_time - last_analysis_time >= analysis_interval:
+                    if detected_objects:
+                        # Check if scene has changed
+                        has_changed, change_type = self.object_tracker.has_changed(detected_objects)
+                        
+                        if has_changed:
+                            # Count objects by type
+                            object_counts = {}
+                            for obj in detected_objects:
+                                label = obj['label']
+                                object_counts[label] = object_counts.get(label, 0) + 1
+                            
+                            # Create announcement text
+                            announcement_parts = []
+                            for label, count in object_counts.items():
+                                if count == 1:
+                                    announcement_parts.append(f"one {label}")
+                                else:
+                                    announcement_parts.append(f"{count} {label}s")
+                            
+                            announcement = "I see " + ", ".join(announcement_parts)
+                            
+                            print(f"\n🔊 Change detected ({change_type})")
+                            print(f"🔊 Announcing: {announcement}")
+                            
+                            # Speak in background thread to avoid blocking
+                            threading.Thread(target=self.speak_text, args=(announcement,), daemon=True).start()
+                        else:
+                            print(f"\n✓ No significant changes detected")
+                    else:
+                        # Check if we had objects before
+                        if self.object_tracker.previous_objects:
+                            print("\n🔊 Objects disappeared")
+                            threading.Thread(target=self.speak_text, args=("No objects detected",), daemon=True).start()
+                            self.object_tracker.reset()
+                        else:
+                            print("\n✓ Still no objects")
+                    
+                    last_analysis_time = current_time
+                
+                cv2.imshow('Real-time Object Detection', annotated_frame)
+                
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q') or key == ord('Q'):
+                    print("\n↩️ Returning to main menu...")
+                    self.speak_text("Returning to main menu")
+                    break
+                
+        except Exception as e:
+            print(f"\n❌ Error during detection: {str(e)}")
         
-        cap.release()
-        cv2.destroyAllWindows()
-        print("✅ Object detection stopped")
-        
-        # Brief pause before returning to menu
-        time.sleep(1)
+        finally:
+            # Cleanup
+            cap.release()
+            cv2.destroyAllWindows()
+            # Ensure all windows are closed
+            cv2.waitKey(1)
+            print("✅ Object detection stopped")
+            
+            # Brief pause before returning to menu
+            time.sleep(1)
 
 
 class CommandVoiceAssistant:
@@ -856,33 +869,52 @@ class IntegratedAssistant:
                 
                 if choice == "1":
                     print("\n🔄 Loading Voice Assistant...")
-                    if not self.voice_assistant:
-                        self.voice_assistant = CommandVoiceAssistant(
-                            whisper_model="base",
-                            llm_model="llama3.2:1b",
-                            glasses_device=None
-                        )
-                    self.voice_assistant.run_voice_assistant()
+                    try:
+                        if not self.voice_assistant:
+                            self.voice_assistant = CommandVoiceAssistant(
+                                whisper_model="base",
+                                llm_model="llama3.2:1b",
+                                glasses_device=None
+                            )
+                        self.voice_assistant.run_voice_assistant()
+                    except Exception as e:
+                        print(f"\n❌ Voice Assistant Error: {str(e)}")
+                        print("↩️ Returning to main menu...")
+                        time.sleep(1)
                     
                 elif choice == "2":
                     print("\n🔄 Loading Image Capture System...")
-                    self.initialize_tts()
-                    if not self.vision_system:
-                        self.vision_system = VisionRecognitionSystem(
-                            camera_id=0,
-                            tts=self.tts
-                        )
-                    self.vision_system.capture_and_caption()
+                    try:
+                        self.initialize_tts()
+                        if not self.vision_system:
+                            self.vision_system = VisionRecognitionSystem(
+                                camera_id=0,
+                                tts=self.tts
+                            )
+                        self.vision_system.capture_and_caption()
+                    except Exception as e:
+                        print(f"\n❌ Image Capture Error: {str(e)}")
+                        print("↩️ Returning to main menu...")
+                        # Ensure camera is released
+                        cv2.destroyAllWindows()
+                        time.sleep(1)
                     
                 elif choice == "3":
                     print("\n🔄 Loading Object Detection System...")
-                    self.initialize_tts()
-                    if not self.vision_system:
-                        self.vision_system = VisionRecognitionSystem(
-                            camera_id=0,
-                            tts=self.tts
-                        )
-                    self.vision_system.realtime_object_detection()
+                    try:
+                        self.initialize_tts()
+                        if not self.vision_system:
+                            self.vision_system = VisionRecognitionSystem(
+                                camera_id=0,
+                                tts=self.tts
+                            )
+                        self.vision_system.realtime_object_detection()
+                    except Exception as e:
+                        print(f"\n❌ Object Detection Error: {str(e)}")
+                        print("↩️ Returning to main menu...")
+                        # Ensure camera is released
+                        cv2.destroyAllWindows()
+                        time.sleep(1)
                     
                 elif choice == "0":
                     print("\n" + "="*70)
@@ -894,12 +926,17 @@ class IntegratedAssistant:
                     print("⚠️ Invalid choice. Please enter 1, 2, 3, or 0.")
                     
             except KeyboardInterrupt:
-                print("\n\n👋 Exiting...")
-                break
+                # Handle Ctrl+C gracefully - return to menu instead of exiting
+                print("\n\n⚠️ Interrupted! Returning to main menu...")
+                cv2.destroyAllWindows()
+                time.sleep(1)
+                continue
+                
             except Exception as e:
-                print(f"\n❌ Error: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                print(f"\n❌ Unexpected Error: {str(e)}")
+                print("↩️ Returning to main menu...")
+                cv2.destroyAllWindows()
+                time.sleep(1)
                 continue
 
 
