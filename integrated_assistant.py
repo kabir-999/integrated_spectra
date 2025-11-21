@@ -20,6 +20,12 @@ from components.TextToSpeech import TextToSpeech
 from components.SmartGlassesAudio import SmartGlassesAudio
 from components.VectorDB import RAGChatbot
 
+# Face recognition imports
+import face_recognition
+import pickle
+import geocoder
+import shutil
+
 # Command definitions
 COMMAND_KEYWORDS = {
     "play_youtube_video": ["play video", "youtube", "show video", "watch video"],
@@ -827,12 +833,325 @@ class CommandVoiceAssistant:
                 continue
 
 
+class FaceRecognitionSystem:
+    """Terminal-based face recognition system using OpenCV"""
+    
+    def __init__(self, camera_id=0):
+        self.camera_id = camera_id
+        
+        # Configuration
+        self.KNOWN_FACES_DIR = "known_faces"
+        self.METADATA_FILE = os.path.join(self.KNOWN_FACES_DIR, "metadata.json")
+        self.CACHE_FILE = os.path.join(self.KNOWN_FACES_DIR, "face_encodings_cache.pkl")
+        self.OUTPUT_FRAMES_DIR = os.path.expanduser("~/Documents/a_s/Kabir_Mathur")
+        self.IDENTIFIED_PERSONS_DIR = os.path.expanduser("~/Documents/a_s/identified_persons")
+        os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
+        os.makedirs(self.OUTPUT_FRAMES_DIR, exist_ok=True)
+        
+        # Face Recognition variables
+        self.known_face_encodings = []
+        self.known_face_names = []
+        self.last_saved_time = {}
+        
+        # Pending registration
+        self.pending_face_encoding = None
+        self.pending_face_image = None
+        self.pending_face_location = None
+        
+        # Load YOLO model
+        try:
+            self.yolo_model = YOLO('yolov8n.pt')
+            print("✅ YOLO model loaded for face recognition")
+        except Exception as e:
+            print(f"❌ Error loading YOLO model: {e}")
+            raise RuntimeError("Could not initialize YOLO model")
+        
+        # Get person class ID
+        class_names = self.yolo_model.names
+        self.face_class_id = None
+        for class_id, name in class_names.items():
+            if name == 'person':
+                self.face_class_id = class_id
+                break
+        
+        # Load known faces
+        self.known_face_encodings, self.known_face_names = self.load_known_faces()
+    
+    def save_face_encoding(self, name, encoding, image):
+        """Save a new face encoding and its image"""
+        os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
+        
+        if os.path.exists(self.METADATA_FILE):
+            with open(self.METADATA_FILE, 'r') as f:
+                metadata = json.load(f)
+        else:
+            metadata = {"known_faces": []}
+        
+        person_dir = os.path.join(self.KNOWN_FACES_DIR, name)
+        os.makedirs(person_dir, exist_ok=True)
+        
+        timestamp = int(time.time())
+        filename = f"{timestamp}.jpg"
+        filepath = os.path.join(person_dir, filename)
+        
+        cv2.imwrite(filepath, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+        
+        encodings_file = os.path.join(person_dir, 'encodings.pkl')
+        if os.path.exists(encodings_file):
+            with open(encodings_file, 'rb') as f:
+                person_encodings = pickle.load(f)
+        else:
+            person_encodings = []
+            metadata['known_faces'].append(name)
+        
+        person_encodings.append(encoding)
+        
+        with open(encodings_file, 'wb') as f:
+            pickle.dump(person_encodings, f)
+        
+        with open(self.METADATA_FILE, 'w') as f:
+            json.dump(metadata, f)
+        
+        self.known_face_encodings, self.known_face_names = self.load_known_faces()
+        
+        print(f"✅ Saved new face: {name}")
+        return True
+    
+    def load_known_faces(self):
+        """Load known face encodings from disk"""
+        known_face_encodings = []
+        known_face_names = []
+        
+        os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
+        
+        if not os.path.exists(self.METADATA_FILE):
+            with open(self.METADATA_FILE, 'w') as f:
+                json.dump({"known_faces": []}, f)
+            return known_face_encodings, known_face_names
+        
+        with open(self.METADATA_FILE, 'r') as f:
+            metadata = json.load(f)
+        
+        for person_name in metadata['known_faces']:
+            person_dir = os.path.join(self.KNOWN_FACES_DIR, person_name)
+            if not os.path.exists(person_dir):
+                continue
+            
+            encodings_file = os.path.join(person_dir, 'encodings.pkl')
+            if os.path.exists(encodings_file):
+                try:
+                    with open(encodings_file, 'rb') as f:
+                        person_encodings = pickle.load(f)
+                        known_face_encodings.extend(person_encodings)
+                        known_face_names.extend([person_name] * len(person_encodings))
+                except Exception as e:
+                    print(f"❌ Error loading encodings for {person_name}: {e}")
+        
+        if known_face_encodings:
+            with open(self.CACHE_FILE, "wb") as f:
+                pickle.dump((known_face_encodings, known_face_names), f)
+        
+        print(f"✅ Loaded {len(known_face_encodings)} known faces from {len(set(known_face_names))} people")
+        return known_face_encodings, known_face_names
+    
+    def clear_all_faces(self):
+        """Clear all known faces and reset the system"""
+        try:
+            if os.path.exists(self.KNOWN_FACES_DIR):
+                shutil.rmtree(self.KNOWN_FACES_DIR)
+            
+            os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
+            
+            self.known_face_encodings = []
+            self.known_face_names = []
+            
+            with open(self.METADATA_FILE, 'w') as f:
+                json.dump({"known_faces": []}, f)
+            
+            print("✅ Successfully cleared all known faces")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to clear known faces: {str(e)}")
+            return False
+    
+    def run_face_recognition(self):
+        """Run face recognition in terminal with OpenCV window"""
+        print("\n" + "="*60)
+        print("🎭 FACE RECOGNITION SYSTEM")
+        print("="*60)
+        
+        print(f"\n📷 Opening camera {self.camera_id}...")
+        cap = cv2.VideoCapture(self.camera_id)
+        
+        if not cap.isOpened():
+            print("❌ Failed to open camera")
+            return
+        
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        
+        # Warm up camera
+        for _ in range(5):
+            cap.read()
+        
+        print("✅ Camera opened successfully")
+        print("\n📋 Instructions:")
+        print("  • Real-time face detection and recognition")
+        print("  • Press 'r' when unknown face detected to register")
+        print("  • Press 'c' to clear all known faces")
+        print("  • Press 'q' to return to main menu")
+        print("="*60)
+        
+        window_name = 'Face Recognition - Press Q to quit, R to register, C to clear'
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        
+        frame_count = 0
+        PROCESS_EVERY_N_FRAMES = 3
+        
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("❌ Failed to read frame")
+                    break
+                
+                display_frame = frame.copy()
+                
+                # Process every Nth frame for face recognition
+                if frame_count % PROCESS_EVERY_N_FRAMES == 0:
+                    # Convert to RGB
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Run YOLO detection
+                    results = self.yolo_model(frame, verbose=False)
+                    
+                    for r in results:
+                        boxes = r.boxes
+                        for box in boxes:
+                            if self.face_class_id is not None and int(box.cls[0]) != self.face_class_id:
+                                continue
+                            
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            
+                            # Face recognition
+                            face_image_rgb = rgb_frame[y1:y2, x1:x2]
+                            if face_image_rgb.size == 0:
+                                continue
+                            
+                            face_locations = face_recognition.face_locations(face_image_rgb)
+                            
+                            if face_locations:
+                                face_encodings_list = face_recognition.face_encodings(face_image_rgb, face_locations)
+                                
+                                if face_encodings_list:
+                                    face_encoding = face_encodings_list[0]
+                                    
+                                    if len(self.known_face_encodings) > 0:
+                                        face_distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
+                                        best_match_index = np.argmin(face_distances)
+                                        
+                                        if face_distances[best_match_index] < 0.6:
+                                            identified_name = self.known_face_names[best_match_index]
+                                            is_unknown = False
+                                        else:
+                                            identified_name = "Unknown"
+                                            is_unknown = True
+                                    else:
+                                        identified_name = "Unknown"
+                                        is_unknown = True
+                                    
+                                    # Draw on frame
+                                    if is_unknown:
+                                        # Store for potential registration
+                                        self.pending_face_encoding = face_encoding
+                                        self.pending_face_image = face_image_rgb
+                                        self.pending_face_location = face_locations[0]
+                                        
+                                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                                        cv2.putText(display_frame, "Unknown - Press 'R' to Register", 
+                                                   (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                                    else:
+                                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                        cv2.putText(display_frame, identified_name, 
+                                                   (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                                        
+                                        # Save identified face periodically
+                                        if not is_unknown:
+                                            current_timestamp = time.time()
+                                            if identified_name not in self.last_saved_time or \
+                                               (current_timestamp - self.last_saved_time[identified_name]) > 5:
+                                                now = datetime.now()
+                                                current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+                                                g = geocoder.ip('me')
+                                                location = g.city if g.city else "Unknown"
+                                                
+                                                filename = f"{identified_name},{current_time},{location}.jpg".replace(" ", "_").replace(":", "-")
+                                                filepath = os.path.join(self.IDENTIFIED_PERSONS_DIR, filename)
+                                                cv2.imwrite(filepath, frame)
+                                                self.last_saved_time[identified_name] = current_timestamp
+                                                print(f"💾 Saved: {identified_name} at {current_time}")
+                
+                frame_count += 1
+                
+                # Add status bar
+                status_text = f"Known Faces: {len(set(self.known_face_names))} | FPS: ~{int(30/PROCESS_EVERY_N_FRAMES)}"
+                cv2.rectangle(display_frame, (10, 10), (500, 50), (0, 0, 0), -1)
+                cv2.putText(display_frame, status_text, (20, 35), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                cv2.imshow(window_name, display_frame)
+                
+                key = cv2.waitKey(1) & 0xFF
+                
+                if key == ord('q') or key == ord('Q'):
+                    print("\n↩️ Returning to main menu...")
+                    break
+                    
+                elif key == ord('r') or key == ord('R'):
+                    if self.pending_face_encoding is not None:
+                        print("\n📝 Enter name for this person (or press Enter to cancel): ", end='')
+                        name = input().strip()
+                        
+                        if name:
+                            self.save_face_encoding(name, self.pending_face_encoding, self.pending_face_image)
+                            print(f"✅ Registered face as: {name}")
+                            self.pending_face_encoding = None
+                            self.pending_face_image = None
+                            self.pending_face_location = None
+                        else:
+                            print("❌ Registration cancelled")
+                    else:
+                        print("⚠️ No unknown face detected. Move in front of camera.")
+                
+                elif key == ord('c') or key == ord('C'):
+                    print("\n⚠️ Clear all known faces? This cannot be undone!")
+                    print("Type 'yes' to confirm: ", end='')
+                    confirm = input().strip().lower()
+                    
+                    if confirm == 'yes':
+                        self.clear_all_faces()
+                        print("✅ All faces cleared")
+                    else:
+                        print("❌ Clear cancelled")
+        
+        except Exception as e:
+            print(f"\n❌ Error during face recognition: {str(e)}")
+        
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+            print("✅ Face recognition stopped")
+            time.sleep(1)
+
+
 class IntegratedAssistant:
-    """Integrated system with voice assistant and vision recognition"""
+    """Integrated system with all features - Terminal-based"""
     
     def __init__(self):
         self.voice_assistant = None
         self.vision_system = None
+        self.face_recognition_system = None
         self.tts = None
     
     def initialize_tts(self):
@@ -845,12 +1164,13 @@ class IntegratedAssistant:
     def run(self):
         """Main application loop"""
         print("\n" + "="*70)
-        print("🤖 INTEGRATED AI ASSISTANT SYSTEM")
+        print("🤖 INTEGRATED AI ASSISTANT SYSTEM (Terminal Mode)")
         print("="*70)
         print("\n✨ Features:")
         print("  • Voice Assistant with Command Detection")
         print("  • Image Capture with BLIP Captioning + Speech")
         print("  • Real-time Object Detection with Intelligent Announcements")
+        print("  • Face Recognition with OpenCV Window")
         print("  • Change Detection (Position & Objects)")
         print("  • Conversational AI with Memory")
         print("="*70)
@@ -861,6 +1181,7 @@ class IntegratedAssistant:
             print("1️⃣  Voice Assistant (Commands + Conversation)")
             print("2️⃣  Capture & Caption Image (BLIP + TTS)")
             print("3️⃣  Real-time Object Detection (YOLO + Smart Voice)")
+            print("4️⃣  Face Recognition (Terminal Window)")
             print("0️⃣  Exit")
             print("="*70)
             
@@ -881,7 +1202,7 @@ class IntegratedAssistant:
                         print(f"\n❌ Voice Assistant Error: {str(e)}")
                         print("↩️ Returning to main menu...")
                         time.sleep(1)
-                    
+                
                 elif choice == "2":
                     print("\n🔄 Loading Image Capture System...")
                     try:
@@ -895,10 +1216,9 @@ class IntegratedAssistant:
                     except Exception as e:
                         print(f"\n❌ Image Capture Error: {str(e)}")
                         print("↩️ Returning to main menu...")
-                        # Ensure camera is released
                         cv2.destroyAllWindows()
                         time.sleep(1)
-                    
+                
                 elif choice == "3":
                     print("\n🔄 Loading Object Detection System...")
                     try:
@@ -912,26 +1232,36 @@ class IntegratedAssistant:
                     except Exception as e:
                         print(f"\n❌ Object Detection Error: {str(e)}")
                         print("↩️ Returning to main menu...")
-                        # Ensure camera is released
                         cv2.destroyAllWindows()
                         time.sleep(1)
-                    
+                
+                elif choice == "4":
+                    print("\n🔄 Loading Face Recognition System...")
+                    try:
+                        if not self.face_recognition_system:
+                            self.face_recognition_system = FaceRecognitionSystem(camera_id=0)
+                        self.face_recognition_system.run_face_recognition()
+                    except Exception as e:
+                        print(f"\n❌ Face Recognition Error: {str(e)}")
+                        print("↩️ Returning to main menu...")
+                        cv2.destroyAllWindows()
+                        time.sleep(1)
+                
                 elif choice == "0":
                     print("\n" + "="*70)
                     print("👋 Thank you for using the Integrated AI Assistant!")
                     print("="*70)
                     break
-                    
+                
                 else:
-                    print("⚠️ Invalid choice. Please enter 1, 2, 3, or 0.")
-                    
+                    print("⚠️ Invalid choice. Please enter 1, 2, 3, 4, or 0.")
+            
             except KeyboardInterrupt:
-                # Handle Ctrl+C gracefully - return to menu instead of exiting
                 print("\n\n⚠️ Interrupted! Returning to main menu...")
                 cv2.destroyAllWindows()
                 time.sleep(1)
                 continue
-                
+            
             except Exception as e:
                 print(f"\n❌ Unexpected Error: {str(e)}")
                 print("↩️ Returning to main menu...")
