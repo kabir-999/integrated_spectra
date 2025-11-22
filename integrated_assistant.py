@@ -792,6 +792,9 @@ class FaceRecognitionSystem:
         self.ENCODINGS_FILE = os.path.join(self.KNOWN_FACES_DIR, "face_encodings.pkl")
         self.IDENTIFIED_PERSONS_DIR = "identified_persons"
         
+        # Recognition threshold - lower is stricter (0-100, lower = more confident match required)
+        self.RECOGNITION_THRESHOLD = 50  # Adjust this value (30-70 recommended)
+        
         os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
         os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
         
@@ -907,13 +910,14 @@ class FaceRecognitionSystem:
                     self.known_face_names.append(name)
                 
                 print(f"✅ Loaded model with {len(self.known_face_names)} known people")
+                print(f"ℹ️ Recognition threshold: {self.RECOGNITION_THRESHOLD} (lower = stricter)")
             except Exception as e:
                 print(f"⚠️ Error loading model: {e}")
         else:
             print("ℹ️ No trained model found. Add faces to get started.")
     
     def recognize_face(self, face_gray, face_location):
-        """Recognize a face"""
+        """Recognize a face with strict threshold"""
         x, y, w, h = face_location
         face_roi = face_gray[y:y+h, x:x+w]
         face_roi = cv2.resize(face_roi, (200, 200))
@@ -924,12 +928,16 @@ class FaceRecognitionSystem:
         try:
             label, confidence = self.face_recognizer.predict(face_roi)
             
-            if confidence < 80:
+            # Only accept if confidence is below threshold (lower is better match)
+            if confidence < self.RECOGNITION_THRESHOLD:
                 name = self.known_face_names[label]
+                print(f"✅ Recognized: {name} (confidence: {confidence:.1f})")
                 return name, confidence
             else:
+                print(f"❌ Unknown face (confidence: {confidence:.1f} > threshold: {self.RECOGNITION_THRESHOLD})")
                 return "Unknown", confidence
-        except:
+        except Exception as e:
+            print(f"⚠️ Recognition error: {e}")
             return "Unknown", 100
     
     def clear_all_faces(self):
@@ -975,6 +983,7 @@ class FaceRecognitionSystem:
         print("✅ Camera opened successfully")
         print("\n📋 Instructions:")
         print("   • Real-time face detection and recognition")
+        print(f"   • Recognition threshold: {self.RECOGNITION_THRESHOLD} (strict matching)")
         print("   • Press 'r' when unknown face detected to register")
         print("   • Press 'c' to clear all known faces")
         print("   • Press 'q' to return to main menu")
@@ -984,7 +993,7 @@ class FaceRecognitionSystem:
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         
         frame_count = 0
-        PROCESS_EVERY_N_FRAMES = 3
+        PROCESS_EVERY_N_FRAMES = 5  # Reduced FPS (process every 5th frame instead of 3rd)
         
         try:
             while True:
@@ -1029,10 +1038,10 @@ class FaceRecognitionSystem:
                 
                 frame_count += 1
                 
-                status_text = f"Known Faces: {len(self.known_face_names)} | FPS: ~{int(30/PROCESS_EVERY_N_FRAMES)}"
-                cv2.rectangle(display_frame, (10, 10), (500, 50), (0, 0, 0), -1)
+                status_text = f"Known Faces: {len(self.known_face_names)} | Threshold: {self.RECOGNITION_THRESHOLD} | FPS: ~{int(30/PROCESS_EVERY_N_FRAMES)}"
+                cv2.rectangle(display_frame, (10, 10), (650, 50), (0, 0, 0), -1)
                 cv2.putText(display_frame, status_text, (20, 35), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 
                 cv2.imshow(window_name, display_frame)
                 
