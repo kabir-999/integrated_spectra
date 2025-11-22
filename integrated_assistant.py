@@ -790,11 +790,9 @@ class FaceRecognitionSystem:
         self.KNOWN_FACES_DIR = "known_faces"
         self.METADATA_FILE = os.path.join(self.KNOWN_FACES_DIR, "metadata.json")
         self.ENCODINGS_FILE = os.path.join(self.KNOWN_FACES_DIR, "face_encodings.pkl")
-        self.OUTPUT_FRAMES_DIR = os.path.expanduser("~/Documents/a_s/Kabir_Mathur")
-        self.IDENTIFIED_PERSONS_DIR = os.path.expanduser("~/Documents/a_s/identified_persons")
+        self.IDENTIFIED_PERSONS_DIR = "identified_persons"
         
         os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
-        os.makedirs(self.OUTPUT_FRAMES_DIR, exist_ok=True)
         os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
         
         self.face_cascade = cv2.CascadeClassifier(
