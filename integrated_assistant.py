@@ -260,40 +260,66 @@ class ObjectTracker:
         self.previous_objects = {}
 
 
-class VisionRecognitionSystem:
-    """BLIP-based vision recognition system"""
+class UnifiedVisionSystem:
+    """Unified vision system with YOLO, BLIP, and Face Recognition"""
     
     def __init__(self, camera_id=0, tts=None):
         self.camera_id = camera_id
+        self.tts = tts
+        self.glasses = SmartGlassesAudio(None) if tts else None
+        
+        # Models
         self.yolo_model = None
         self.blip_processor = None
         self.blip_model = None
-        self.cap = None
-        self.is_running = False
-        self.tts = tts
-        self.glasses = SmartGlassesAudio(None) if tts else None
+        
+        # Face recognition
+        self.KNOWN_FACES_DIR = "known_faces"
+        self.METADATA_FILE = os.path.join(self.KNOWN_FACES_DIR, "metadata.json")
+        self.IDENTIFIED_PERSONS_DIR = "identified_persons"
+        self.RECOGNITION_THRESHOLD = 35
+        
+        os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
+        os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
+        
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+        self.face_recognizer = cv2.face.LBPHFaceRecognizer_create()
+        self.known_face_labels = {}
+        self.known_face_names = []
+        self.last_saved_time = {}
+        
+        # Pending face registration
+        self.pending_face_gray = None
+        self.pending_face_location = None
+        
+        # Object tracker
         self.object_tracker = ObjectTracker(position_threshold=100)
         
-        print("🔧 Initializing Vision Recognition System...")
+        print("🔧 Initializing Unified Vision System...")
+        self.load_known_faces()
     
     def load_models(self):
         """Load YOLO and BLIP models"""
         try:
-            print("📦 Loading YOLO model...")
-            self.yolo_model = YOLO('yolov8n.pt')
-            print("✅ YOLO model loaded")
+            if not self.yolo_model:
+                print("📦 Loading YOLO model...")
+                self.yolo_model = YOLO('yolov8n.pt')
+                print("✅ YOLO model loaded")
             
-            print("📦 Loading BLIP model...")
-            self.blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-            self.blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-            
-            if torch.cuda.is_available():
-                self.blip_model = self.blip_model.cuda()
-                print("✅ BLIP model loaded (GPU)")
-            else:
-                print("✅ BLIP model loaded (CPU)")
-            
-            self.blip_model.eval()
+            if not self.blip_model:
+                print("📦 Loading BLIP model...")
+                self.blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+                self.blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+                
+                if torch.cuda.is_available():
+                    self.blip_model = self.blip_model.cuda()
+                    print("✅ BLIP model loaded (GPU)")
+                else:
+                    print("✅ BLIP model loaded (CPU)")
+                
+                self.blip_model.eval()
             
         except Exception as e:
             print(f"❌ Error loading models: {e}")
@@ -340,104 +366,6 @@ class VisionRecognitionSystem:
             print(f"❌ Error in BLIP analysis: {e}")
             return "Scene analysis unavailable"
     
-    def capture_and_caption(self):
-        """Capture a single image, caption it with BLIP, and speak the caption"""
-        print("\n" + "="*60)
-        print("📸 IMAGE CAPTURE & CAPTIONING")
-        print("="*60)
-        
-        if not self.blip_model:
-            self.load_models()
-        
-        print(f"\n📷 Opening camera {self.camera_id}...")
-        cap = cv2.VideoCapture(self.camera_id)
-        
-        if not cap.isOpened():
-            print("❌ Failed to open camera")
-            self.speak_text("Failed to open camera")
-            return
-        
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        
-        time.sleep(0.5)
-        
-        print("✅ Camera opened successfully")
-        print("\n📋 Instructions:")
-        print("   • Position yourself/object in frame")
-        print("   • Press SPACE to capture")
-        print("   • Press 'q' to return to main menu")
-        print("="*60)
-        print("\n⚠️ IMPORTANT: Click on the camera window to focus it!")
-        
-        captured = False
-        window_name = 'Capture Image - Press SPACE or Q'
-        
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        
-        frame_count = 0
-        
-        try:
-            while not captured:
-                ret, frame = cap.read()
-                if not ret:
-                    print("❌ Failed to read frame")
-                    break
-                
-                frame_count += 1
-                
-                display_frame = frame.copy()
-                
-                if (frame_count // 15) % 2 == 0:
-                    cv2.rectangle(display_frame, (30, 30), (850, 100), (0, 0, 0), -1)
-                    cv2.rectangle(display_frame, (30, 30), (850, 100), (0, 255, 0), 3)
-                    cv2.putText(display_frame, "Press SPACE to capture, Q to return", 
-                               (50, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-                
-                cv2.imshow(window_name, display_frame)
-                
-                key = cv2.waitKey(30) & 0xFF
-                
-                if key == 32:
-                    print("\n📸 Capturing image...")
-                    
-                    print("🔍 Analyzing with BLIP...")
-                    caption = self.analyze_with_blip(frame)
-                    
-                    print(f"\n📝 Caption: {caption}")
-                    print("="*60)
-                    
-                    self.speak_text(caption)
-                    
-                    filename = f"capture_{int(time.time())}.jpg"
-                    cv2.imwrite(filename, frame)
-                    print(f"💾 Image saved as: {filename}")
-                    
-                    captured = True
-                
-                elif key == ord('q') or key == ord('Q'):
-                    print("\n↩️ Returning to main menu...")
-                    break
-                
-                elif key == 27:
-                    print("\n↩️ Returning to main menu (ESC pressed)...")
-                    break
-        
-        except Exception as e:
-            print(f"\n❌ Error during capture: {str(e)}")
-        
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
-        
-        if captured:
-            print("\n✅ Image capture and captioning completed!")
-        else:
-            print("\n✅ Capture cancelled")
-        
-        time.sleep(1)
-    
     def detect_objects(self, frame):
         """Detect objects using YOLO model"""
         try:
@@ -481,14 +409,160 @@ class VisionRecognitionSystem:
             print(f"❌ Error in object detection: {e}")
             return [], frame
     
-    def realtime_object_detection(self):
-        """Run real-time object detection with intelligent voice announcements"""
+    def detect_faces(self, frame):
+        """Detect faces using Haar Cascade"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+        return faces, gray
+    
+    def recognize_face(self, face_gray, face_location):
+        """Recognize a face with strict threshold"""
+        x, y, w, h = face_location
+        face_roi = face_gray[y:y+h, x:x+w]
+        face_roi = cv2.resize(face_roi, (200, 200))
+        
+        if not self.known_face_names:
+            return "Unknown", 100
+        
+        try:
+            label, confidence = self.face_recognizer.predict(face_roi)
+            
+            if confidence < self.RECOGNITION_THRESHOLD:
+                name = self.known_face_names[label]
+                print(f"✅ Recognized: {name} (confidence: {confidence:.1f})")
+                return name, confidence
+            else:
+                print(f"❌ Unknown face (confidence: {confidence:.1f} > threshold: {self.RECOGNITION_THRESHOLD})")
+                return "Unknown", confidence
+        except Exception as e:
+            print(f"⚠️ Recognition error: {e}")
+            return "Unknown", 100
+    
+    def save_face_encoding(self, name, face_gray, face_location):
+        """Save a new face to the database"""
+        os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
+        
+        if os.path.exists(self.METADATA_FILE):
+            with open(self.METADATA_FILE, 'r') as f:
+                metadata = json.load(f)
+        else:
+            metadata = {"known_faces": [], "face_data": {}}
+        
+        person_dir = os.path.join(self.KNOWN_FACES_DIR, name)
+        os.makedirs(person_dir, exist_ok=True)
+        
+        timestamp = int(time.time())
+        filename = f"{timestamp}.jpg"
+        filepath = os.path.join(person_dir, filename)
+        
+        x, y, w, h = face_location
+        face_roi = face_gray[y:y+h, x:x+w]
+        cv2.imwrite(filepath, face_roi)
+        
+        if name not in metadata["known_faces"]:
+            metadata["known_faces"].append(name)
+            metadata["face_data"][name] = []
+        
+        metadata["face_data"][name].append(filepath)
+        
+        with open(self.METADATA_FILE, 'w') as f:
+            json.dump(metadata, f)
+        
+        self.train_model()
+        
+        print(f"✅ Saved new face: {name}")
+        return True
+    
+    def train_model(self):
+        """Train the face recognition model"""
+        if not os.path.exists(self.METADATA_FILE):
+            return
+        
+        with open(self.METADATA_FILE, 'r') as f:
+            metadata = json.load(f)
+        
+        faces = []
+        labels = []
+        
+        self.known_face_labels = {}
+        self.known_face_names = []
+        
+        for idx, name in enumerate(metadata["known_faces"]):
+            self.known_face_labels[name] = idx
+            self.known_face_names.append(name)
+            
+            if name in metadata["face_data"]:
+                for face_path in metadata["face_data"][name]:
+                    if os.path.exists(face_path):
+                        face_img = cv2.imread(face_path, cv2.IMREAD_GRAYSCALE)
+                        face_img = cv2.resize(face_img, (200, 200))
+                        faces.append(face_img)
+                        labels.append(idx)
+        
+        if faces:
+            self.face_recognizer.train(faces, np.array(labels))
+            
+            model_path = os.path.join(self.KNOWN_FACES_DIR, "trained_model.yml")
+            self.face_recognizer.write(model_path)
+            
+            print(f"✅ Model trained with {len(faces)} face samples from {len(self.known_face_names)} people")
+    
+    def load_known_faces(self):
+        """Load known faces from disk"""
+        model_path = os.path.join(self.KNOWN_FACES_DIR, "trained_model.yml")
+        
+        if os.path.exists(model_path) and os.path.exists(self.METADATA_FILE):
+            try:
+                self.face_recognizer.read(model_path)
+                
+                with open(self.METADATA_FILE, 'r') as f:
+                    metadata = json.load(f)
+                
+                for idx, name in enumerate(metadata["known_faces"]):
+                    self.known_face_labels[name] = idx
+                    self.known_face_names.append(name)
+                
+                print(f"✅ Loaded {len(self.known_face_names)} known people")
+                print(f"ℹ️ Recognition threshold: {self.RECOGNITION_THRESHOLD}")
+            except Exception as e:
+                print(f"⚠️ Error loading model: {e}")
+        else:
+            print("ℹ️ No trained model found. Add faces to get started.")
+    
+    def clear_all_faces(self):
+        """Clear all known faces and reset the system"""
+        try:
+            if os.path.exists(self.KNOWN_FACES_DIR):
+                shutil.rmtree(self.KNOWN_FACES_DIR)
+            
+            os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
+            
+            self.known_face_labels = {}
+            self.known_face_names = []
+            self.face_recognizer = cv2.face.LBPHFaceRecognizer_create()
+            
+            with open(self.METADATA_FILE, 'w') as f:
+                json.dump({"known_faces": [], "face_data": {}}, f)
+            
+            print("✅ Successfully cleared all known faces")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to clear known faces: {str(e)}")
+            return False
+    
+    def run_unified_vision(self):
+        """Run unified vision system with all features"""
         print("\n" + "="*60)
-        print("🎯 REAL-TIME OBJECT DETECTION (INTELLIGENT)")
+        print("👁️ UNIFIED VISION SYSTEM")
         print("="*60)
         
-        if not self.yolo_model:
-            self.load_models()
+        # Load models
+        self.load_models()
         
         print(f"\n📷 Opening camera {self.camera_id}...")
         cap = cv2.VideoCapture(self.camera_id)
@@ -501,17 +575,28 @@ class VisionRecognitionSystem:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         
+        # Warm up camera
+        for _ in range(5):
+            cap.read()
+        
         print("✅ Camera opened successfully")
-        print("\n📋 Instructions:")
-        print("   • Real-time object detection active")
-        print("   • Analysis every 5 seconds")
-        print("   • Announces only when objects/positions change")
-        print("   • Press 'q' to return to main menu")
+        print("\n📋 Controls:")
+        print("   • SPACE: Capture & Analyze with BLIP (+ speak caption)")
+        print("   • 'r': Register unknown face")
+        print("   • 'c': Clear all known faces")
+        print("   • 'q': Return to main menu")
+        print("="*60)
+        print(f"ℹ️ Face Recognition Threshold: {self.RECOGNITION_THRESHOLD}")
+        print(f"ℹ️ Known Faces: {len(self.known_face_names)}")
         print("="*60)
         
-        self.speak_text("Object detection started")
+        self.speak_text("Vision system started")
         
-        self.object_tracker.reset()
+        window_name = 'Unified Vision - SPACE:Analyze | R:Register | C:Clear | Q:Quit'
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        
+        frame_count = 0
+        PROCESS_EVERY_N_FRAMES = 5
         
         last_analysis_time = 0
         analysis_interval = 5.0
@@ -523,72 +608,145 @@ class VisionRecognitionSystem:
                     print("❌ Failed to read frame")
                     break
                 
-                detected_objects, annotated_frame = self.detect_objects(frame)
+                display_frame = frame.copy()
                 
-                obj_count = len(detected_objects)
-                
-                cv2.rectangle(annotated_frame, (10, 10), (600, 100), (0, 0, 0), -1)
-                cv2.putText(annotated_frame, f"Objects Detected: {obj_count}", 
-                           (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                
-                current_time = time.time()
-                time_until_next = max(0, analysis_interval - (current_time - last_analysis_time))
-                cv2.putText(annotated_frame, f"Next analysis: {time_until_next:.1f}s", 
-                           (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-                
-                if current_time - last_analysis_time >= analysis_interval:
-                    if detected_objects:
-                        has_changed, change_type = self.object_tracker.has_changed(detected_objects)
-                        
-                        if has_changed:
-                            object_counts = {}
-                            for obj in detected_objects:
-                                label = obj['label']
-                                object_counts[label] = object_counts.get(label, 0) + 1
-                            
-                            announcement_parts = []
-                            for label, count in object_counts.items():
-                                if count == 1:
-                                    announcement_parts.append(f"one {label}")
-                                else:
-                                    announcement_parts.append(f"{count} {label}s")
-                            
-                            announcement = "I see " + ", ".join(announcement_parts)
-                            
-                            print(f"\n🔊 Change detected ({change_type})")
-                            print(f"🔊 Announcing: {announcement}")
-                            
-                            threading.Thread(target=self.speak_text, args=(announcement,), daemon=True).start()
-                        else:
-                            print(f"\n✓ No significant changes detected")
-                    else:
-                        if self.object_tracker.previous_objects:
-                            print("\n🔊 Objects disappeared")
-                            threading.Thread(target=self.speak_text, args=("No objects detected",), daemon=True).start()
-                            self.object_tracker.reset()
-                        else:
-                            print("\n✓ Still no objects")
+                # Process frame every N frames
+                if frame_count % PROCESS_EVERY_N_FRAMES == 0:
+                    # Object detection
+                    detected_objects, annotated_frame = self.detect_objects(frame)
+                    display_frame = annotated_frame.copy()
                     
-                    last_analysis_time = current_time
+                    # Face recognition
+                    faces, gray = self.detect_faces(frame)
+                    
+                    for (x, y, w, h) in faces:
+                        name, confidence = self.recognize_face(gray, (x, y, w, h))
+                        
+                        is_unknown = (name == "Unknown")
+                        
+                        if is_unknown:
+                            self.pending_face_gray = gray
+                            self.pending_face_location = (x, y, w, h)
+                            
+                            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 255), 3)
+                            cv2.putText(display_frame, "Unknown - Press 'R'", 
+                                       (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        else:
+                            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 3)
+                            text = f"{name} ({confidence:.0f})"
+                            cv2.putText(display_frame, text, 
+                                       (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                            
+                            # Save identified person
+                            current_timestamp = time.time()
+                            if name not in self.last_saved_time or \
+                               (current_timestamp - self.last_saved_time[name]) > 5:
+                                
+                                filename = f"{name}_{int(current_timestamp)}.jpg"
+                                filepath = os.path.join(self.IDENTIFIED_PERSONS_DIR, filename)
+                                cv2.imwrite(filepath, frame)
+                                
+                                self.last_saved_time[name] = current_timestamp
+                                print(f"💾 Saved: {name}")
+                    
+                    # Periodic object announcement
+                    current_time = time.time()
+                    if current_time - last_analysis_time >= analysis_interval:
+                        if detected_objects:
+                            has_changed, change_type = self.object_tracker.has_changed(detected_objects)
+                            
+                            if has_changed:
+                                object_counts = {}
+                                for obj in detected_objects:
+                                    label = obj['label']
+                                    object_counts[label] = object_counts.get(label, 0) + 1
+                                
+                                announcement_parts = []
+                                for label, count in object_counts.items():
+                                    if count == 1:
+                                        announcement_parts.append(f"one {label}")
+                                    else:
+                                        announcement_parts.append(f"{count} {label}s")
+                                
+                                announcement = "I see " + ", ".join(announcement_parts)
+                                
+                                print(f"\n🔊 Objects: {announcement}")
+                                threading.Thread(target=self.speak_text, args=(announcement,), daemon=True).start()
+                        
+                        last_analysis_time = current_time
                 
-                cv2.imshow('Real-time Object Detection', annotated_frame)
+                frame_count += 1
+                
+                # Status bar
+                obj_count = len(self.detect_objects(frame)[0])
+                status_text = f"Objects: {obj_count} | Faces: {len(self.known_face_names)} | Threshold: {self.RECOGNITION_THRESHOLD}"
+                cv2.rectangle(display_frame, (10, 10), (700, 50), (0, 0, 0), -1)
+                cv2.putText(display_frame, status_text, (20, 35), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                # Instruction overlay
+                cv2.rectangle(display_frame, (10, display_frame.shape[0] - 60), 
+                             (500, display_frame.shape[0] - 10), (0, 0, 0), -1)
+                cv2.putText(display_frame, "SPACE: Analyze Scene | R: Register Face", 
+                           (20, display_frame.shape[0] - 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                cv2.imshow(window_name, display_frame)
                 
                 key = cv2.waitKey(1) & 0xFF
+                
                 if key == ord('q') or key == ord('Q'):
                     print("\n↩️ Returning to main menu...")
-                    self.speak_text("Returning to main menu")
+                    self.speak_text("Exiting vision system")
                     break
+                
+                elif key == 32:  # SPACE - Analyze with BLIP
+                    print("\n📸 Analyzing scene with BLIP...")
+                    caption = self.analyze_with_blip(frame)
+                    print(f"📝 Caption: {caption}")
+                    self.speak_text(caption)
+                    
+                    # Save analyzed frame
+                    filename = f"analyzed_{int(time.time())}.jpg"
+                    cv2.imwrite(filename, frame)
+                    print(f"💾 Saved: {filename}")
+                
+                elif key == ord('r') or key == ord('R'):
+                    if self.pending_face_gray is not None:
+                        print("\n📝 Enter name for this person (or press Enter to cancel): ", end='')
+                        name = input().strip()
+                        
+                        if name:
+                            self.save_face_encoding(name, self.pending_face_gray, self.pending_face_location)
+                            print(f"✅ Registered: {name}")
+                            self.speak_text(f"Registered {name}")
+                            self.pending_face_gray = None
+                            self.pending_face_location = None
+                        else:
+                            print("❌ Registration cancelled")
+                    else:
+                        print("⚠️ No unknown face detected")
+                
+                elif key == ord('c') or key == ord('C'):
+                    print("\n⚠️ Clear all known faces? Type 'yes' to confirm: ", end='')
+                    confirm = input().strip().lower()
+                    
+                    if confirm == 'yes':
+                        self.clear_all_faces()
+                        print("✅ All faces cleared")
+                        self.speak_text("All faces cleared")
+                    else:
+                        print("❌ Clear cancelled")
         
         except Exception as e:
-            print(f"\n❌ Error during detection: {str(e)}")
+            print(f"\n❌ Error: {str(e)}")
         
         finally:
             cap.release()
             cv2.destroyAllWindows()
             cv2.waitKey(1)
         
-        print("✅ Object detection stopped")
-        
+        print("✅ Vision system stopped")
         time.sleep(1)
 
 
@@ -781,321 +939,12 @@ class CommandVoiceAssistant:
                 continue
 
 
-class FaceRecognitionSystem:
-    """OpenCV-based face recognition system (NO dlib required)"""
-    
-    def __init__(self, camera_id=0):
-        self.camera_id = camera_id
-        
-        self.KNOWN_FACES_DIR = "known_faces"
-        self.METADATA_FILE = os.path.join(self.KNOWN_FACES_DIR, "metadata.json")
-        self.ENCODINGS_FILE = os.path.join(self.KNOWN_FACES_DIR, "face_encodings.pkl")
-        self.IDENTIFIED_PERSONS_DIR = "identified_persons"
-        
-        # Recognition threshold - lower is stricter (0-100, lower = more confident match required)
-        self.RECOGNITION_THRESHOLD = 35  # Adjust this value (30-70 recommended)
-        
-        os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
-        os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
-        
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        )
-        
-        self.face_recognizer = cv2.face.LBPHFaceRecognizer_create()
-        
-        self.known_face_labels = {}
-        self.known_face_names = []
-        self.last_saved_time = {}
-        
-        self.pending_face_image = None
-        self.pending_face_gray = None
-        self.pending_face_location = None
-        
-        self.load_known_faces()
-    
-    def detect_faces(self, frame):
-        """Detect faces using Haar Cascade"""
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-        return faces, gray
-    
-    def save_face_encoding(self, name, face_gray, face_location):
-        """Save a new face to the database"""
-        os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
-        
-        if os.path.exists(self.METADATA_FILE):
-            with open(self.METADATA_FILE, 'r') as f:
-                metadata = json.load(f)
-        else:
-            metadata = {"known_faces": [], "face_data": {}}
-        
-        person_dir = os.path.join(self.KNOWN_FACES_DIR, name)
-        os.makedirs(person_dir, exist_ok=True)
-        
-        timestamp = int(time.time())
-        filename = f"{timestamp}.jpg"
-        filepath = os.path.join(person_dir, filename)
-        
-        x, y, w, h = face_location
-        face_roi = face_gray[y:y+h, x:x+w]
-        cv2.imwrite(filepath, face_roi)
-        
-        if name not in metadata["known_faces"]:
-            metadata["known_faces"].append(name)
-            metadata["face_data"][name] = []
-        
-        metadata["face_data"][name].append(filepath)
-        
-        with open(self.METADATA_FILE, 'w') as f:
-            json.dump(metadata, f)
-        
-        self.train_model()
-        
-        print(f"✅ Saved new face: {name}")
-        return True
-    
-    def train_model(self):
-        """Train the face recognition model"""
-        if not os.path.exists(self.METADATA_FILE):
-            return
-        
-        with open(self.METADATA_FILE, 'r') as f:
-            metadata = json.load(f)
-        
-        faces = []
-        labels = []
-        
-        self.known_face_labels = {}
-        self.known_face_names = []
-        
-        for idx, name in enumerate(metadata["known_faces"]):
-            self.known_face_labels[name] = idx
-            self.known_face_names.append(name)
-            
-            if name in metadata["face_data"]:
-                for face_path in metadata["face_data"][name]:
-                    if os.path.exists(face_path):
-                        face_img = cv2.imread(face_path, cv2.IMREAD_GRAYSCALE)
-                        face_img = cv2.resize(face_img, (200, 200))
-                        faces.append(face_img)
-                        labels.append(idx)
-        
-        if faces:
-            self.face_recognizer.train(faces, np.array(labels))
-            
-            model_path = os.path.join(self.KNOWN_FACES_DIR, "trained_model.yml")
-            self.face_recognizer.write(model_path)
-            
-            print(f"✅ Model trained with {len(faces)} face samples from {len(self.known_face_names)} people")
-    
-    def load_known_faces(self):
-        """Load known faces from disk"""
-        model_path = os.path.join(self.KNOWN_FACES_DIR, "trained_model.yml")
-        
-        if os.path.exists(model_path) and os.path.exists(self.METADATA_FILE):
-            try:
-                self.face_recognizer.read(model_path)
-                
-                with open(self.METADATA_FILE, 'r') as f:
-                    metadata = json.load(f)
-                
-                for idx, name in enumerate(metadata["known_faces"]):
-                    self.known_face_labels[name] = idx
-                    self.known_face_names.append(name)
-                
-                print(f"✅ Loaded model with {len(self.known_face_names)} known people")
-                print(f"ℹ️ Recognition threshold: {self.RECOGNITION_THRESHOLD} (lower = stricter)")
-            except Exception as e:
-                print(f"⚠️ Error loading model: {e}")
-        else:
-            print("ℹ️ No trained model found. Add faces to get started.")
-    
-    def recognize_face(self, face_gray, face_location):
-        """Recognize a face with strict threshold"""
-        x, y, w, h = face_location
-        face_roi = face_gray[y:y+h, x:x+w]
-        face_roi = cv2.resize(face_roi, (200, 200))
-        
-        if not self.known_face_names:
-            return "Unknown", 100
-        
-        try:
-            label, confidence = self.face_recognizer.predict(face_roi)
-            
-            # Only accept if confidence is below threshold (lower is better match)
-            if confidence < self.RECOGNITION_THRESHOLD:
-                name = self.known_face_names[label]
-                print(f"✅ Recognized: {name} (confidence: {confidence:.1f})")
-                return name, confidence
-            else:
-                print(f"❌ Unknown face (confidence: {confidence:.1f} > threshold: {self.RECOGNITION_THRESHOLD})")
-                return "Unknown", confidence
-        except Exception as e:
-            print(f"⚠️ Recognition error: {e}")
-            return "Unknown", 100
-    
-    def clear_all_faces(self):
-        """Clear all known faces and reset the system"""
-        try:
-            if os.path.exists(self.KNOWN_FACES_DIR):
-                shutil.rmtree(self.KNOWN_FACES_DIR)
-            
-            os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
-            
-            self.known_face_labels = {}
-            self.known_face_names = []
-            self.face_recognizer = cv2.face.LBPHFaceRecognizer_create()
-            
-            with open(self.METADATA_FILE, 'w') as f:
-                json.dump({"known_faces": [], "face_data": {}}, f)
-            
-            print("✅ Successfully cleared all known faces")
-            return True
-        except Exception as e:
-            print(f"❌ Failed to clear known faces: {str(e)}")
-            return False
-    
-    def run_face_recognition(self):
-        """Run face recognition in terminal with OpenCV window"""
-        print("\n" + "="*60)
-        print("🎭 FACE RECOGNITION SYSTEM (OpenCV)")
-        print("="*60)
-        
-        print(f"\n📷 Opening camera {self.camera_id}...")
-        cap = cv2.VideoCapture(self.camera_id)
-        
-        if not cap.isOpened():
-            print("❌ Failed to open camera")
-            return
-        
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        
-        for _ in range(5):
-            cap.read()
-        
-        print("✅ Camera opened successfully")
-        print("\n📋 Instructions:")
-        print("   • Real-time face detection and recognition")
-        print(f"   • Recognition threshold: {self.RECOGNITION_THRESHOLD} (strict matching)")
-        print("   • Press 'r' when unknown face detected to register")
-        print("   • Press 'c' to clear all known faces")
-        print("   • Press 'q' to return to main menu")
-        print("="*60)
-        
-        window_name = 'Face Recognition (OpenCV) - Press Q to quit, R to register, C to clear'
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        
-        frame_count = 0
-        PROCESS_EVERY_N_FRAMES = 5  # Reduced FPS (process every 5th frame instead of 3rd)
-        
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    print("❌ Failed to read frame")
-                    break
-                
-                display_frame = frame.copy()
-                
-                if frame_count % PROCESS_EVERY_N_FRAMES == 0:
-                    faces, gray = self.detect_faces(frame)
-                    
-                    for (x, y, w, h) in faces:
-                        name, confidence = self.recognize_face(gray, (x, y, w, h))
-                        
-                        is_unknown = (name == "Unknown")
-                        
-                        if is_unknown:
-                            self.pending_face_gray = gray
-                            self.pending_face_location = (x, y, w, h)
-                            
-                            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 255), 2)
-                            cv2.putText(display_frame, "Unknown - Press 'R' to Register", 
-                                       (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                        else:
-                            cv2.rectangle(display_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                            text = f"{name} ({confidence:.0f})"
-                            cv2.putText(display_frame, text, 
-                                       (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                            
-                            current_timestamp = time.time()
-                            if name not in self.last_saved_time or \
-                               (current_timestamp - self.last_saved_time[name]) > 5:
-                                
-                                filename = f"{name}_{int(current_timestamp)}.jpg"
-                                filepath = os.path.join(self.IDENTIFIED_PERSONS_DIR, filename)
-                                cv2.imwrite(filepath, frame)
-                                
-                                self.last_saved_time[name] = current_timestamp
-                                print(f"💾 Saved: {name}")
-                
-                frame_count += 1
-                
-                status_text = f"Known Faces: {len(self.known_face_names)} | Threshold: {self.RECOGNITION_THRESHOLD} | FPS: ~{int(30/PROCESS_EVERY_N_FRAMES)}"
-                cv2.rectangle(display_frame, (10, 10), (650, 50), (0, 0, 0), -1)
-                cv2.putText(display_frame, status_text, (20, 35), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                
-                cv2.imshow(window_name, display_frame)
-                
-                key = cv2.waitKey(1) & 0xFF
-                
-                if key == ord('q') or key == ord('Q'):
-                    print("\n↩️ Returning to main menu...")
-                    break
-                
-                elif key == ord('r') or key == ord('R'):
-                    if self.pending_face_gray is not None:
-                        print("\n📝 Enter name for this person (or press Enter to cancel): ", end='')
-                        name = input().strip()
-                        
-                        if name:
-                            self.save_face_encoding(name, self.pending_face_gray, self.pending_face_location)
-                            print(f"✅ Registered face as: {name}")
-                            self.pending_face_gray = None
-                            self.pending_face_location = None
-                        else:
-                            print("❌ Registration cancelled")
-                    else:
-                        print("⚠️ No unknown face detected. Move in front of camera.")
-                
-                elif key == ord('c') or key == ord('C'):
-                    print("\n⚠️ Clear all known faces? This cannot be undone!")
-                    print("Type 'yes' to confirm: ", end='')
-                    confirm = input().strip().lower()
-                    
-                    if confirm == 'yes':
-                        self.clear_all_faces()
-                        print("✅ All faces cleared")
-                    else:
-                        print("❌ Clear cancelled")
-        
-        except Exception as e:
-            print(f"\n❌ Error during face recognition: {str(e)}")
-        
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
-            cv2.waitKey(1)
-        
-        print("✅ Face recognition stopped")
-        time.sleep(1)
-
-
 class IntegratedAssistant:
     """Integrated system with all features - Terminal-based"""
     
     def __init__(self):
         self.voice_assistant = None
         self.vision_system = None
-        self.face_recognition_system = None
         self.tts = None
     
     def initialize_tts(self):
@@ -1108,24 +957,22 @@ class IntegratedAssistant:
     def run(self):
         """Main application loop"""
         print("\n" + "="*70)
-        print("🤖 INTEGRATED AI ASSISTANT SYSTEM (Terminal Mode)")
+        print("🤖 INTEGRATED AI ASSISTANT SYSTEM")
         print("="*70)
         print("\n✨ Features:")
-        print("   • Voice Assistant with Command Detection")
-        print("   • Image Capture with BLIP Captioning + Speech")
-        print("   • Real-time Object Detection with Intelligent Announcements")
-        print("   • Face Recognition (OpenCV - Fast Installation)")
-        print("   • Change Detection (Position & Objects)")
-        print("   • Conversational AI with Memory")
+        print("   • Voice Assistant (Commands + Conversation)")
+        print("   • Unified Vision System:")
+        print("     - Real-time Object Detection (YOLO)")
+        print("     - Scene Analysis with BLIP (SPACE key)")
+        print("     - Face Recognition (OpenCV)")
+        print("     - Smart Voice Announcements")
         print("="*70)
         
         while True:
             print("\n\n📍 MAIN MENU")
             print("="*70)
             print("1️⃣  Voice Assistant (Commands + Conversation)")
-            print("2️⃣  Capture & Caption Image (BLIP + TTS)")
-            print("3️⃣  Real-time Object Detection (YOLO + Smart Voice)")
-            print("4️⃣  Face Recognition (OpenCV - No dlib)")
+            print("2️⃣  Unified Vision System (YOLO + BLIP + Face Recognition)")
             print("0️⃣  Exit")
             print("="*70)
             
@@ -1148,45 +995,17 @@ class IntegratedAssistant:
                         time.sleep(1)
                 
                 elif choice == "2":
-                    print("\n🔄 Loading Image Capture System...")
+                    print("\n🔄 Loading Unified Vision System...")
                     try:
                         self.initialize_tts()
                         if not self.vision_system:
-                            self.vision_system = VisionRecognitionSystem(
+                            self.vision_system = UnifiedVisionSystem(
                                 camera_id=0,
                                 tts=self.tts
                             )
-                        self.vision_system.capture_and_caption()
+                        self.vision_system.run_unified_vision()
                     except Exception as e:
-                        print(f"\n❌ Image Capture Error: {str(e)}")
-                        print("↩️ Returning to main menu...")
-                        cv2.destroyAllWindows()
-                        time.sleep(1)
-                
-                elif choice == "3":
-                    print("\n🔄 Loading Object Detection System...")
-                    try:
-                        self.initialize_tts()
-                        if not self.vision_system:
-                            self.vision_system = VisionRecognitionSystem(
-                                camera_id=0,
-                                tts=self.tts
-                            )
-                        self.vision_system.realtime_object_detection()
-                    except Exception as e:
-                        print(f"\n❌ Object Detection Error: {str(e)}")
-                        print("↩️ Returning to main menu...")
-                        cv2.destroyAllWindows()
-                        time.sleep(1)
-                
-                elif choice == "4":
-                    print("\n🔄 Loading Face Recognition System...")
-                    try:
-                        if not self.face_recognition_system:
-                            self.face_recognition_system = FaceRecognitionSystem(camera_id=0)
-                        self.face_recognition_system.run_face_recognition()
-                    except Exception as e:
-                        print(f"\n❌ Face Recognition Error: {str(e)}")
+                        print(f("\n❌ Vision System Error: {str(e)}")
                         print("↩️ Returning to main menu...")
                         cv2.destroyAllWindows()
                         time.sleep(1)
@@ -1198,7 +1017,7 @@ class IntegratedAssistant:
                     break
                 
                 else:
-                    print("⚠️ Invalid choice. Please enter 1, 2, 3, 4, or 0.")
+                    print("⚠️ Invalid choice. Please enter 1, 2, or 0.")
             
             except KeyboardInterrupt:
                 print("\n\n⚠️ Interrupted! Returning to main menu...")
