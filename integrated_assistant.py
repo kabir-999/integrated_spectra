@@ -924,7 +924,7 @@ class FaceRecognitionSystem:
         try:
             label, confidence = self.face_recognizer.predict(face_roi)
             
-            if confidence < 70:
+            if confidence < 80:
                 name = self.known_face_names[label]
                 return name, confidence
             else:
