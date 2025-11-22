@@ -7,7 +7,6 @@ import cv2
 import time
 import threading
 import numpy as np
-from datetime import datetime
 from PIL import Image
 import torch
 from transformers import BlipProcessor, BlipForConditionalGeneration
@@ -23,7 +22,6 @@ from components.VectorDB import RAGChatbot
 # Face recognition imports
 import face_recognition
 import pickle
-import geocoder
 import shutil
 
 # Command definitions
@@ -54,9 +52,7 @@ Rules:
 
 Answer with ONE WORD only: COMMAND or CONVERSATION"""
 
-CHATBOT_SYSTEM_PROMPT = """You are a helpful, friendly voice assistant. 
-Keep responses concise (2-3 sentences) and conversational.
-Your response will be spoken aloud."""
+CHATBOT_SYSTEM_PROMPT = """You are a helpful, friendly voice assistant. Keep responses concise (2-3 sentences) and conversational. Your response will be spoken aloud."""
 
 
 class ImprovedCommandDetector:
@@ -245,7 +241,6 @@ class ObjectTracker:
         
         # Check if positions have changed significantly
         position_changed = False
-        
         for curr_obj in current_objects:
             curr_label = curr_obj['label']
             curr_center = self.calculate_center(curr_obj['bbox'])
@@ -289,6 +284,7 @@ class VisionRecognitionSystem:
         self.tts = tts
         self.glasses = SmartGlassesAudio(None) if tts else None
         self.object_tracker = ObjectTracker(position_threshold=100)
+        
         print("🔧 Initializing Vision Recognition System...")
     
     def load_models(self):
@@ -353,6 +349,7 @@ class VisionRecognitionSystem:
                 outputs = self.blip_model.generate(**inputs, max_new_tokens=50)
             
             caption = self.blip_processor.decode(outputs[0], skip_special_tokens=True)
+            
             return caption if caption else "Scene analysis in progress..."
             
         except Exception as e:
@@ -386,11 +383,11 @@ class VisionRecognitionSystem:
         
         print("✅ Camera opened successfully")
         print("\n📋 Instructions:")
-        print("  • Position yourself/object in frame")
-        print("  • Press SPACE to capture")
-        print("  • Press 'q' to return to main menu")
+        print("   • Position yourself/object in frame")
+        print("   • Press SPACE to capture")
+        print("   • Press 'q' to return to main menu")
         print("="*60)
-        print("\n⚠️  IMPORTANT: Click on the camera window to focus it!")
+        print("\n⚠️ IMPORTANT: Click on the camera window to focus it!")
         
         captured = False
         window_name = 'Capture Image - Press SPACE or Q'
@@ -438,16 +435,16 @@ class VisionRecognitionSystem:
                     self.speak_text(caption)
                     
                     # Save the captured image
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"capture_{timestamp}.jpg"
+                    filename = f"capture_{int(time.time())}.jpg"
                     cv2.imwrite(filename, frame)
                     print(f"💾 Image saved as: {filename}")
                     
                     captured = True
-                    
+                
                 elif key == ord('q') or key == ord('Q'):
                     print("\n↩️ Returning to main menu...")
                     break
+                
                 elif key == 27:  # ESC key
                     print("\n↩️ Returning to main menu (ESC pressed)...")
                     break
@@ -459,23 +456,21 @@ class VisionRecognitionSystem:
             # Cleanup
             cap.release()
             cv2.destroyAllWindows()
-            
             # Ensure all windows are closed
             cv2.waitKey(1)
-            
-            if captured:
-                print("\n✅ Image capture and captioning completed!")
-            else:
-                print("\n✅ Capture cancelled")
-            
-            # Brief pause before returning to menu
-            time.sleep(1)
+        
+        if captured:
+            print("\n✅ Image capture and captioning completed!")
+        else:
+            print("\n✅ Capture cancelled")
+        
+        # Brief pause before returning to menu
+        time.sleep(1)
     
     def detect_objects(self, frame):
         """Detect objects using YOLO model"""
         try:
             results = self.yolo_model.predict(frame, conf=0.45, verbose=False)
-            
             detected_objects = []
             annotated_frame = frame.copy()
             
@@ -484,7 +479,6 @@ class VisionRecognitionSystem:
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                     x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                    
                     conf = float(box.conf[0].cpu().numpy())
                     cls = int(box.cls[0].cpu().numpy())
                     label = result.names[cls]
@@ -508,7 +502,7 @@ class VisionRecognitionSystem:
                     text = f"{label} {conf:.2f}"
                     (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
                     cv2.rectangle(annotated_frame, (x1, y1 - th - 10), (x1 + tw + 6, y1), color, -1)
-                    cv2.putText(annotated_frame, text, (x1 + 3, y1 - 5), 
+                    cv2.putText(annotated_frame, text, (x1 + 3, y1 - 5),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
             
             return detected_objects, annotated_frame
@@ -541,10 +535,10 @@ class VisionRecognitionSystem:
         
         print("✅ Camera opened successfully")
         print("\n📋 Instructions:")
-        print("  • Real-time object detection active")
-        print("  • Analysis every 5 seconds")
-        print("  • Announces only when objects/positions change")
-        print("  • Press 'q' to return to main menu")
+        print("   • Real-time object detection active")
+        print("   • Analysis every 5 seconds")
+        print("   • Announces only when objects/positions change")
+        print("   • Press 'q' to return to main menu")
         print("="*60)
         
         self.speak_text("Object detection started")
@@ -627,7 +621,7 @@ class VisionRecognitionSystem:
                     print("\n↩️ Returning to main menu...")
                     self.speak_text("Returning to main menu")
                     break
-                
+        
         except Exception as e:
             print(f"\n❌ Error during detection: {str(e)}")
         
@@ -637,22 +631,25 @@ class VisionRecognitionSystem:
             cv2.destroyAllWindows()
             # Ensure all windows are closed
             cv2.waitKey(1)
-            print("✅ Object detection stopped")
-            
-            # Brief pause before returning to menu
-            time.sleep(1)
+        
+        print("✅ Object detection stopped")
+        
+        # Brief pause before returning to menu
+        time.sleep(1)
 
 
 class CommandVoiceAssistant:
     def __init__(self, whisper_model="base", llm_model="llama3.2:1b", glasses_device=None):
         """Initialize the command-based voice assistant with conversational capabilities"""
         print("🔧 Initializing Command Voice Assistant...")
+        
         self.stt = SpeechToText(whisper_model)
         self.llm = LocalLLM(llm_model)
         self.tts = TextToSpeech()
         self.glasses = SmartGlassesAudio(glasses_device)
         self.vectordb = RAGChatbot()
         self.detector = ImprovedCommandDetector()
+        
         print("✅ Voice Assistant initialized successfully!")
     
     def record_and_transcribe(self, duration=5):
@@ -680,8 +677,8 @@ class CommandVoiceAssistant:
         try:
             prompt = SIMPLE_COMMAND_PROMPT.format(user_input=user_input)
             response = self.llm.generate_response(prompt, max_tokens=50)
-            
             response_clean = response.strip().upper()
+            
             print(f"🔍 LLM Classification: {response_clean}")
             
             if "COMMAND" in response_clean:
@@ -704,7 +701,6 @@ class CommandVoiceAssistant:
         if command_type:
             print(f"✅ Rule-based detection: {command_type}")
             parameters = self.detector.extract_parameters(user_input, command_type, matched_groups)
-            
             return {
                 "is_command": True,
                 "action": command_type,
@@ -727,7 +723,7 @@ class CommandVoiceAssistant:
         
         try:
             prompt, contexts = self.vectordb.build_prompt_with_context(
-                user_input, 
+                user_input,
                 CHATBOT_SYSTEM_PROMPT
             )
             
@@ -777,15 +773,12 @@ class CommandVoiceAssistant:
             print("\n📄 JSON Output:")
             print(json.dumps(result, indent=2))
             print("="*60)
-            
             return result
-            
         else:
             print("💬 CONVERSATIONAL MODE")
             print("="*60)
             
             response = self.generate_conversational_response(user_input)
-            
             print(f"\n🤖 Assistant: {response}")
             print("="*60)
             
@@ -817,17 +810,18 @@ class CommandVoiceAssistant:
                     user_input = self.record_and_transcribe(duration=5)
                     if user_input:
                         self.process_input(user_input)
-                        
+                
                 elif choice == "0":
                     print("\n↩️ Returning to main menu...")
                     break
-                    
+                
                 else:
                     print("⚠️ Invalid choice. Please enter 1 or 0.")
-                    
+            
             except KeyboardInterrupt:
                 print("\n\n↩️ Returning to main menu...")
                 break
+            
             except Exception as e:
                 print(f"\n❌ Error: {str(e)}")
                 continue
@@ -845,6 +839,7 @@ class FaceRecognitionSystem:
         self.CACHE_FILE = os.path.join(self.KNOWN_FACES_DIR, "face_encodings_cache.pkl")
         self.OUTPUT_FRAMES_DIR = os.path.expanduser("~/Documents/a_s/Kabir_Mathur")
         self.IDENTIFIED_PERSONS_DIR = os.path.expanduser("~/Documents/a_s/identified_persons")
+        
         os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
         os.makedirs(self.OUTPUT_FRAMES_DIR, exist_ok=True)
         
@@ -902,8 +897,8 @@ class FaceRecognitionSystem:
                 person_encodings = pickle.load(f)
         else:
             person_encodings = []
-            metadata['known_faces'].append(name)
         
+        metadata['known_faces'].append(name)
         person_encodings.append(encoding)
         
         with open(encodings_file, 'wb') as f:
@@ -942,8 +937,9 @@ class FaceRecognitionSystem:
                 try:
                     with open(encodings_file, 'rb') as f:
                         person_encodings = pickle.load(f)
-                        known_face_encodings.extend(person_encodings)
-                        known_face_names.extend([person_name] * len(person_encodings))
+                    
+                    known_face_encodings.extend(person_encodings)
+                    known_face_names.extend([person_name] * len(person_encodings))
                 except Exception as e:
                     print(f"❌ Error loading encodings for {person_name}: {e}")
         
@@ -996,10 +992,10 @@ class FaceRecognitionSystem:
         
         print("✅ Camera opened successfully")
         print("\n📋 Instructions:")
-        print("  • Real-time face detection and recognition")
-        print("  • Press 'r' when unknown face detected to register")
-        print("  • Press 'c' to clear all known faces")
-        print("  • Press 'q' to return to main menu")
+        print("   • Real-time face detection and recognition")
+        print("   • Press 'r' when unknown face detected to register")
+        print("   • Press 'c' to clear all known faces")
+        print("   • Press 'q' to return to main menu")
         print("="*60)
         
         window_name = 'Face Recognition - Press Q to quit, R to register, C to clear'
@@ -1080,16 +1076,13 @@ class FaceRecognitionSystem:
                                             current_timestamp = time.time()
                                             if identified_name not in self.last_saved_time or \
                                                (current_timestamp - self.last_saved_time[identified_name]) > 5:
-                                                now = datetime.now()
-                                                current_time = now.strftime("%Y-%m-%d %H:%M:%S")
-                                                g = geocoder.ip('me')
-                                                location = g.city if g.city else "Unknown"
                                                 
-                                                filename = f"{identified_name},{current_time},{location}.jpg".replace(" ", "_").replace(":", "-")
+                                                filename = f"{identified_name}_{int(current_timestamp)}.jpg"
                                                 filepath = os.path.join(self.IDENTIFIED_PERSONS_DIR, filename)
                                                 cv2.imwrite(filepath, frame)
+                                                
                                                 self.last_saved_time[identified_name] = current_timestamp
-                                                print(f"💾 Saved: {identified_name} at {current_time}")
+                                                print(f"💾 Saved: {identified_name}")
                 
                 frame_count += 1
                 
@@ -1106,7 +1099,7 @@ class FaceRecognitionSystem:
                 if key == ord('q') or key == ord('Q'):
                     print("\n↩️ Returning to main menu...")
                     break
-                    
+                
                 elif key == ord('r') or key == ord('R'):
                     if self.pending_face_encoding is not None:
                         print("\n📝 Enter name for this person (or press Enter to cancel): ", end='')
@@ -1141,8 +1134,9 @@ class FaceRecognitionSystem:
             cap.release()
             cv2.destroyAllWindows()
             cv2.waitKey(1)
-            print("✅ Face recognition stopped")
-            time.sleep(1)
+        
+        print("✅ Face recognition stopped")
+        time.sleep(1)
 
 
 class IntegratedAssistant:
@@ -1167,12 +1161,12 @@ class IntegratedAssistant:
         print("🤖 INTEGRATED AI ASSISTANT SYSTEM (Terminal Mode)")
         print("="*70)
         print("\n✨ Features:")
-        print("  • Voice Assistant with Command Detection")
-        print("  • Image Capture with BLIP Captioning + Speech")
-        print("  • Real-time Object Detection with Intelligent Announcements")
-        print("  • Face Recognition with OpenCV Window")
-        print("  • Change Detection (Position & Objects)")
-        print("  • Conversational AI with Memory")
+        print("   • Voice Assistant with Command Detection")
+        print("   • Image Capture with BLIP Captioning + Speech")
+        print("   • Real-time Object Detection with Intelligent Announcements")
+        print("   • Face Recognition with OpenCV Window")
+        print("   • Change Detection (Position & Objects)")
+        print("   • Conversational AI with Memory")
         print("="*70)
         
         while True:
@@ -1275,7 +1269,6 @@ def main():
     try:
         app = IntegratedAssistant()
         app.run()
-        
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye!")
         sys.exit(0)
