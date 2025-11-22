@@ -793,7 +793,7 @@ class FaceRecognitionSystem:
         self.IDENTIFIED_PERSONS_DIR = "identified_persons"
         
         # Recognition threshold - lower is stricter (0-100, lower = more confident match required)
-        self.RECOGNITION_THRESHOLD = 50  # Adjust this value (30-70 recommended)
+        self.RECOGNITION_THRESHOLD = 35  # Adjust this value (30-70 recommended)
         
         os.makedirs(self.IDENTIFIED_PERSONS_DIR, exist_ok=True)
         os.makedirs(self.KNOWN_FACES_DIR, exist_ok=True)
