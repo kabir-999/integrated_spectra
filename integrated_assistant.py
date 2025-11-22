@@ -1050,3 +1050,29 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+## **Key Features of Unified Vision System:**
+
+### **Single Window with All Features:**
+1. **Real-time Object Detection** - Always running with YOLO
+2. **Face Recognition** - Always running, identifies known faces
+3. **Scene Analysis** - Press SPACE to analyze with BLIP and speak caption
+
+### **Controls:**
+- **SPACE**: Capture frame → Analyze with BLIP → Speak caption → Save image
+- **R**: Register unknown face
+- **C**: Clear all known faces
+- **Q**: Quit to main menu
+
+### **What happens simultaneously:**
+- ✅ YOLO detects objects continuously
+- ✅ Face recognition runs continuously
+- ✅ Smart voice announcements every 5 seconds
+- ✅ Press SPACE for detailed BLIP analysis + TTS
+
+### **Simplified Menu:**
+```
+1️⃣ Voice Assistant
+2️⃣ Unified Vision System (All-in-One)
+0️⃣ Exit
